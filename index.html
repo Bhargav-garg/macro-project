@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Deep Pawn - Playable Chess Bot</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="theme-default">
+  <!-- NAVIGATION BAR -->
+  <header class="navbar">
+    <div class="brand">
+      <svg class="brand-icon" viewBox="0 0 24 24">
+        <path d="M19 22H5V20H19V22M17 10C15.58 10 14.26 10.77 13.55 12C13.21 11.38 12.65 11 12 11C11.35 11 10.79 11.38 10.45 12C9.74 10.77 8.42 10 7 10C5.34 10 4 11.34 4 13C4 14.27 4.79 15.36 5.92 15.79L7 19H17L18.08 15.79C19.21 15.36 20 14.27 20 13C20 11.34 18.66 10 17 10M12 2C10.9 2 10 2.9 10 4C10 4.74 10.4 5.38 11 5.73V8H13V5.73C13.6 5.38 14 4.74 14 4C14 2.9 13.1 2 12 2Z"/>
+      </svg>
+      <h1>Deep Pawn Chess Bot</h1>
+    </div>
+    <div class="nav-actions">
+      <button class="btn btn-accent" id="soundBtn">🔊 Sound</button>
+      <button class="btn" id="fenBtn">Import/Export FEN</button>
+      <button class="btn" id="pgnBtn">Copy PGN</button>
+    </div>
+  </header>
+
+  <!-- MAIN CONTAINER -->
+  <main class="main-container">
+    <!-- CHESS BOARD & PLAYERS -->
+    <section class="chess-area">
+      <!-- LIVE EVALUATION BAR -->
+      <div class="eval-bar-container" title="Engine Evaluation Advantage">
+        <span class="eval-score-text eval-score-top" id="evalScoreTop"></span>
+        <div class="eval-black" id="evalBlack" style="height: 50%;"></div>
+        <div class="eval-white" id="evalWhite" style="height: 50%;"></div>
+        <span class="eval-score-text eval-score-bottom" id="evalScoreBottom">+0.0</span>
+      </div>
+
+      <!-- BOARD WRAPPER -->
+      <div class="board-wrapper">
+        <!-- BOT (OPPONENT) CARD -->
+        <div class="player-card">
+          <div class="player-info">
+            <div class="player-avatar">🤖</div>
+            <div>
+              <span class="player-name">Deep Pawn AI</span>
+              <span class="material-lead" id="botMaterial" style="display: none;">+0</span>
+            </div>
+          </div>
+          <div class="captured-pieces" id="botCaptured"></div>
+          <span class="status-badge" id="botStatusBadge">Ready</span>
+        </div>
+
+        <!-- 8x8 CHESSBOARD -->
+        <div class="chessboard-container">
+          <div class="chessboard" id="chessboard"></div>
+        </div>
+
+        <!-- HUMAN PLAYER CARD -->
+        <div class="player-card">
+          <div class="player-info">
+            <div class="player-avatar">👤</div>
+            <div>
+              <span class="player-name">You</span>
+              <span class="material-lead" id="playerMaterial" style="display: none;">+0</span>
+            </div>
+          </div>
+          <div class="captured-pieces" id="playerCaptured"></div>
+          <span class="status-badge active" id="playerStatusBadge">Your Turn</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- SIDE PANEL: SETTINGS, MOVE HISTORY, ENGINE STATS -->
+    <aside class="side-panel">
+      <!-- GAME CONFIG -->
+      <div class="panel-card">
+        <div class="panel-header">
+          <span class="panel-title">Game Settings</span>
+        </div>
+
+        <div class="settings-grid">
+          <div class="form-group">
+            <label class="form-label" for="difficultySelect">AI Difficulty</label>
+            <select class="select-input" id="difficultySelect">
+              <option value="beginner">Beginner (~800 ELO)</option>
+              <option value="casual">Casual (~1200 ELO)</option>
+              <option value="intermediate" selected>Intermediate (~1600 ELO)</option>
+              <option value="master">Master (~2000+ ELO)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="sideSelect">Play As</label>
+            <select class="select-input" id="sideSelect">
+              <option value="w" selected>White (First Move)</option>
+              <option value="b">Black</option>
+              <option value="random">Random Side</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="modeSelect">Mode</label>
+            <select class="select-input" id="modeSelect">
+              <option value="vs-bot" selected>vs Chess Bot</option>
+              <option value="pass-and-play">Pass & Play (2P)</option>
+              <option value="bot-vs-bot">Bot vs Bot (Watch)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="themeSelect">Board Theme</label>
+            <select class="select-input" id="themeSelect">
+              <option value="default" selected>Classic Tournament</option>
+              <option value="wood">Walnut Wood</option>
+              <option value="slate">Modern Slate</option>
+              <option value="neon">Midnight Dark</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- BUTTONS -->
+        <div class="button-row">
+          <button class="btn btn-primary" id="newGameBtn">🔄 New</button>
+          <button class="btn" id="undoBtn" disabled>↩️ Undo</button>
+          <button class="btn" id="hintBtn">💡 Hint</button>
+          <button class="btn" id="flipBtn">🔁 Flip</button>
+        </div>
+      </div>
+
+      <!-- MOVE HISTORY -->
+      <div class="panel-card" style="flex: 1;">
+        <div class="panel-header">
+          <span class="panel-title">Move History</span>
+        </div>
+        <div class="moves-container">
+          <table class="moves-table">
+            <tbody id="movesTable"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ENGINE TELEMETRY STATS -->
+      <div class="engine-stats">
+        <div class="engine-stat-item">
+          <span>Depth</span>
+          <span class="stat-value" id="statDepth">-</span>
+        </div>
+        <div class="engine-stat-item">
+          <span>Nodes</span>
+          <span class="stat-value" id="statNodes">-</span>
+        </div>
+        <div class="engine-stat-item">
+          <span>Speed</span>
+          <span class="stat-value" id="statTime">-</span>
+        </div>
+        <div class="engine-stat-item">
+          <span>Eval</span>
+          <span class="stat-value" id="statEval">+0.00</span>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <!-- PAWN PROMOTION MODAL -->
+  <div class="modal-overlay" id="promoModal">
+    <div class="modal-card">
+      <h3 class="modal-title">Promote Pawn</h3>
+      <p class="modal-body">Choose a piece to promote your pawn into:</p>
+      <div class="promo-options" id="promoOptions"></div>
+    </div>
+  </div>
+
+  <!-- GAME OVER MODAL -->
+  <div class="modal-overlay" id="gameOverModal">
+    <div class="modal-card">
+      <h2 class="modal-title" id="gameOverTitle">Game Over</h2>
+      <p class="modal-body" id="gameOverReason">Checkmate</p>
+      <div style="display: flex; gap: 10px; justify-content: center; margin-top: 10px;">
+        <button class="btn btn-primary" id="rematchBtn" style="padding: 10px 20px;">Play Again</button>
+        <button class="btn" id="closeGameOverBtn" style="padding: 10px 20px;">Review Board</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- FEN IMPORT/EXPORT MODAL -->
+  <div class="modal-overlay" id="fenModal">
+    <div class="modal-card">
+      <h3 class="modal-title">FEN Position</h3>
+      <p class="modal-body">Enter a custom FEN position to set up the board:</p>
+      <input type="text" id="fenInput" class="select-input" style="width: 100%; padding: 10px; font-family: monospace;" spellcheck="false" />
+      <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 8px;">
+        <button class="btn" id="closeFenBtn">Cancel</button>
+        <button class="btn btn-primary" id="loadFenSubmitBtn">Load Position</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATION -->
+  <div class="toast" id="toast"></div>
+
+  <!-- SCRIPTS -->
+  <script src="chess-engine.js"></script>
+  <script src="pieces.js"></script>
+  <script src="audio.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
