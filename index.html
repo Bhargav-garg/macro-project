@@ -16,7 +16,8 @@
       <h1>Deep Pawn Chess Bot</h1>
     </div>
     <div class="nav-actions">
-      <button class="btn btn-accent" id="soundBtn">🔊 Sound</button>
+      <button class="btn btn-accent" id="rlStudioBtn">🧠 RL Studio</button>
+      <button class="btn" id="soundBtn">🔊 Sound</button>
       <button class="btn" id="fenBtn">Import/Export FEN</button>
       <button class="btn" id="pgnBtn">Copy PGN</button>
     </div>
@@ -85,6 +86,7 @@
               <option value="casual">Casual (~1200 ELO)</option>
               <option value="intermediate" selected>Intermediate (~1600 ELO)</option>
               <option value="master">Master (~2000+ ELO)</option>
+              <option value="rl_bot">🤖 NeuroPawn (Reinforcement Learning)</option>
             </select>
           </div>
 
@@ -190,6 +192,71 @@
       <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 8px;">
         <button class="btn" id="closeFenBtn">Cancel</button>
         <button class="btn btn-primary" id="loadFenSubmitBtn">Load Position</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- REINFORCEMENT LEARNING STUDIO MODAL -->
+  <div class="modal-overlay" id="rlModal">
+    <div class="modal-card rl-modal-card">
+      <div class="modal-header">
+        <h2 class="modal-title">🧠 NeuroPawn RL Studio</h2>
+        <button class="close-btn" id="closeRlBtn">&times;</button>
+      </div>
+      <p class="modal-body" style="font-size: 0.85rem; text-align: left;">
+        NeuroPawn learns evaluation features through Temporal Difference $TD(\lambda)$ self-play with eligibility traces. Watch weights tune in real-time or export/import trained models.
+      </p>
+
+      <!-- METRICS GRID -->
+      <div class="rl-metrics-grid">
+        <div class="rl-metric-box">
+          <span class="rl-metric-label">Episodes Trained</span>
+          <span class="rl-metric-val" id="rlEpisodesVal">0</span>
+        </div>
+        <div class="rl-metric-box">
+          <span class="rl-metric-label">Record (W / L / D)</span>
+          <span class="rl-metric-val" id="rlRecordVal">0 / 0 / 0</span>
+        </div>
+        <div class="rl-metric-box">
+          <span class="rl-metric-label">Exploration (&epsilon;)</span>
+          <span class="rl-metric-val" id="rlEpsilonVal">0.120</span>
+        </div>
+        <div class="rl-metric-box">
+          <span class="rl-metric-label">Learning Rate (&alpha;)</span>
+          <span class="rl-metric-val" id="rlAlphaVal">0.040</span>
+        </div>
+      </div>
+
+      <!-- TRAINING CONTROLS -->
+      <div class="rl-training-controls">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <span class="form-label" style="text-transform: uppercase;">Self-Play Training</span>
+          <span id="rlStatusBadge" class="status-badge">Idle</span>
+        </div>
+        <div class="button-row" style="grid-template-columns: 1fr 1fr 1fr; margin-top: 6px;">
+          <button class="btn btn-primary" id="rlTrain25Btn">⚡ Train 25</button>
+          <button class="btn btn-primary" id="rlTrain100Btn">⚡ Train 100</button>
+          <button class="btn" id="rlStopTrainBtn" disabled>⏹️ Stop</button>
+        </div>
+        <div class="rl-progress-container" id="rlProgressContainer" style="display: none; margin-top: 8px;">
+          <div class="rl-progress-bar" id="rlProgressBar" style="width: 0%;"></div>
+          <span class="rl-progress-text" id="rlProgressText">Training 0 / 25...</span>
+        </div>
+        <div class="rl-log" id="rlLog">Ready. Select train batch or challenge NeuroPawn in the game!</div>
+      </div>
+
+      <!-- LEARNED WEIGHTS VISUALIZER -->
+      <div class="rl-weights-section">
+        <span class="form-label" style="text-transform: uppercase;">Learned Feature Weights</span>
+        <div class="rl-weights-grid" id="rlWeightsGrid"></div>
+      </div>
+
+      <!-- ACTIONS -->
+      <div class="rl-modal-actions" style="display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px;">
+        <button class="btn" id="rlExportBtn">💾 Export JSON</button>
+        <button class="btn" id="rlImportBtn">📂 Import JSON</button>
+        <button class="btn" id="rlResetBtn">🔄 Reset</button>
+        <input type="file" id="rlFileInput" accept=".json" style="display: none;" />
       </div>
     </div>
   </div>

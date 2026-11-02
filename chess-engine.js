@@ -979,6 +979,336 @@
     }
   }
 
+  // --- REINFORCEMENT LEARNING AGENT (TD-LEARNING / NEUROPAWN) ---
+  const DEFAULT_RL_WEIGHTS = {
+    pawn: 100,
+    knight: 318,
+    bishop: 334,
+    rook: 502,
+    queen: 915,
+    mobility: 6.2,
+    center_control: 18.5,
+    pawn_advance: 8.2,
+    king_shelter: 24.0,
+    bishop_pair: 48.0,
+    threats: 22.0
+  };
+
+  const RL_FEATURE_NAMES = Object.keys(DEFAULT_RL_WEIGHTS);
+
+  class RLChessAgent {
+    constructor(engine, options = {}) {
+      this.engine = engine;
+      this.weights = { ...DEFAULT_RL_WEIGHTS, ...(options.weights || {}) };
+      this.gamma = options.gamma !== undefined ? options.gamma : 0.98;
+      this.lambda = options.lambda !== undefined ? options.lambda : 0.7;
+      this.alpha = options.alpha !== undefined ? options.alpha : 0.04;
+      this.epsilon = options.epsilon !== undefined ? options.epsilon : 0.12;
+      this.episodesTrained = options.episodesTrained || 0;
+      this.stats = options.stats || { winsWhite: 0, winsBlack: 0, draws: 0, totalGames: 0 };
+      this.isTraining = false;
+      this.stopRequested = false;
+
+      // Automatically load saved weights if in browser environment
+      this.loadFromStorage();
+    }
+
+    extractFeatures(board = this.engine.board) {
+      let pW = 0, pB = 0;
+      let nW = 0, nB = 0;
+      let bW = 0, bB = 0;
+      let rW = 0, rB = 0;
+      let qW = 0, qB = 0;
+
+      let whitePawnRanks = 0, blackPawnRanks = 0;
+      let whiteCenter = 0, blackCenter = 0;
+      let whiteKingPos = null, blackKingPos = null;
+
+      for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+          const p = board[r][c];
+          if (!p) continue;
+
+          const isCenter = (r >= 3 && r <= 4 && c >= 3 && c <= 4);
+          const isExtendedCenter = (r >= 2 && r <= 5 && c >= 2 && c <= 5);
+
+          switch (p) {
+            case 'P':
+              pW++;
+              whitePawnRanks += (7 - r);
+              if (isCenter) whiteCenter += 2;
+              else if (isExtendedCenter) whiteCenter += 1;
+              break;
+            case 'p':
+              pB++;
+              blackPawnRanks += r;
+              if (isCenter) blackCenter += 2;
+              else if (isExtendedCenter) blackCenter += 1;
+              break;
+            case 'N':
+              nW++;
+              if (isCenter) whiteCenter += 2;
+              else if (isExtendedCenter) whiteCenter += 1;
+              break;
+            case 'n':
+              nB++;
+              if (isCenter) blackCenter += 2;
+              else if (isExtendedCenter) blackCenter += 1;
+              break;
+            case 'B':
+              bW++;
+              if (isCenter) whiteCenter += 2;
+              break;
+            case 'b':
+              bB++;
+              if (isCenter) blackCenter += 2;
+              break;
+            case 'R': rW++; break;
+            case 'r': rB++; break;
+            case 'Q': qW++; break;
+            case 'q': qB++; break;
+            case 'K': whiteKingPos = { r, c }; break;
+            case 'k': blackKingPos = { r, c }; break;
+          }
+        }
+      }
+
+      // King shelter
+      let whiteKingShelter = 0;
+      if (whiteKingPos) {
+        for (let dc = -1; dc <= 1; dc++) {
+          const kc = whiteKingPos.c + dc;
+          if (kc >= 0 && kc <= 7) {
+            for (let dr = 1; dr <= 2; dr++) {
+              const kr = whiteKingPos.r - dr;
+              if (kr >= 0 && board[kr][kc] === 'P') whiteKingShelter += 1;
+            }
+          }
+        }
+      }
+
+      let blackKingShelter = 0;
+      if (blackKingPos) {
+        for (let dc = -1; dc <= 1; dc++) {
+          const kc = blackKingPos.c + dc;
+          if (kc >= 0 && kc <= 7) {
+            for (let dr = 1; dr <= 2; dr++) {
+              const kr = blackKingPos.r + dr;
+              if (kr <= 7 && board[kr][kc] === 'p') blackKingShelter += 1;
+            }
+          }
+        }
+      }
+
+      const whiteLegal = this.engine.getLegalMoves ? this.engine.getLegalMoves().length : 20;
+
+      return {
+        pawn: pW - pB,
+        knight: nW - nB,
+        bishop: bW - bB,
+        rook: rW - rB,
+        queen: qW - qB,
+        mobility: (this.engine.turn === 'w' ? whiteLegal : -whiteLegal) * 0.1,
+        center_control: whiteCenter - blackCenter,
+        pawn_advance: (whitePawnRanks - blackPawnRanks) * 0.1,
+        king_shelter: whiteKingShelter - blackKingShelter,
+        bishop_pair: (bW >= 2 ? 1 : 0) - (bB >= 2 ? 1 : 0),
+        threats: 0
+      };
+    }
+
+    evaluate(engine = this.engine) {
+      const phi = this.extractFeatures(engine.board);
+      let score = 0;
+      for (const key of RL_FEATURE_NAMES) {
+        score += (this.weights[key] || 0) * (phi[key] || 0);
+      }
+      return score;
+    }
+
+    computeValueFromFeatures(phi) {
+      let v = 0;
+      for (const k of RL_FEATURE_NAMES) {
+        v += (this.weights[k] || 0) * (phi[k] || 0);
+      }
+      return v;
+    }
+
+    selectAction(engine = this.engine, explore = false) {
+      const legalMoves = engine.getLegalMoves();
+      if (legalMoves.length === 0) return null;
+      if (legalMoves.length === 1) return legalMoves[0];
+
+      if (explore && Math.random() < this.epsilon) {
+        return legalMoves[Math.floor(Math.random() * legalMoves.length)];
+      }
+
+      const isWhiteTurn = engine.turn === 'w';
+      let bestMove = legalMoves[0];
+      let bestScore = isWhiteTurn ? -Infinity : Infinity;
+
+      for (const move of legalMoves) {
+        engine.makeMove(move);
+        const score = this.evaluate(engine);
+        engine.undoMove();
+
+        if (isWhiteTurn) {
+          if (score > bestScore) {
+            bestScore = score;
+            bestMove = move;
+          }
+        } else {
+          if (score < bestScore) {
+            bestScore = score;
+            bestMove = move;
+          }
+        }
+      }
+
+      return bestMove;
+    }
+
+    updateFromTrajectory(trajectory, reward) {
+      if (!trajectory || trajectory.length === 0) return;
+
+      const T = trajectory.length;
+      const eligibility = {};
+      for (const k of RL_FEATURE_NAMES) eligibility[k] = 0;
+
+      for (let t = 0; t < T; t++) {
+        const phiCurrent = trajectory[t];
+        const vCurrent = this.computeValueFromFeatures(phiCurrent);
+
+        let target = 0;
+        if (t === T - 1) {
+          target = reward * 1000;
+        } else {
+          const vNext = this.computeValueFromFeatures(trajectory[t + 1]);
+          target = this.gamma * vNext;
+        }
+
+        const delta = target - vCurrent;
+
+        for (const k of RL_FEATURE_NAMES) {
+          eligibility[k] = this.gamma * this.lambda * eligibility[k] + (phiCurrent[k] || 0);
+          const update = this.alpha * delta * (eligibility[k] / 1000);
+          this.weights[k] += update;
+        }
+      }
+
+      this.clampWeights();
+      this.episodesTrained++;
+      this.saveToStorage();
+    }
+
+    clampWeights() {
+      this.weights.pawn = Math.max(50, Math.min(180, this.weights.pawn));
+      this.weights.knight = Math.max(200, Math.min(450, this.weights.knight));
+      this.weights.bishop = Math.max(220, Math.min(480, this.weights.bishop));
+      this.weights.rook = Math.max(350, Math.min(700, this.weights.rook));
+      this.weights.queen = Math.max(700, Math.min(1400, this.weights.queen));
+      this.weights.mobility = Math.max(1, Math.min(25, this.weights.mobility));
+      this.weights.center_control = Math.max(5, Math.min(45, this.weights.center_control));
+      this.weights.pawn_advance = Math.max(1, Math.min(30, this.weights.pawn_advance));
+      this.weights.king_shelter = Math.max(5, Math.min(50, this.weights.king_shelter));
+      this.weights.bishop_pair = Math.max(10, Math.min(90, this.weights.bishop_pair));
+      this.weights.threats = Math.max(0, Math.min(50, this.weights.threats));
+    }
+
+    async trainSelfPlayBatch(numGames, progressCallback) {
+      this.isTraining = true;
+      this.stopRequested = false;
+
+      for (let i = 0; i < numGames; i++) {
+        if (this.stopRequested) break;
+
+        const simEngine = new ChessEngine();
+        const trajectory = [];
+        let movesCount = 0;
+        const maxMoves = 100;
+
+        while (movesCount < maxMoves) {
+          const status = simEngine.isGameOver();
+          if (status.over) break;
+
+          trajectory.push(this.extractFeatures(simEngine.board));
+          const move = this.selectAction(simEngine, true);
+          if (!move) break;
+          simEngine.makeMove(move);
+          movesCount++;
+        }
+
+        const endStatus = simEngine.isGameOver();
+        let reward = 0;
+        if (endStatus.over && endStatus.reason === 'checkmate') {
+          reward = endStatus.winner === 'w' ? 1 : -1;
+          if (endStatus.winner === 'w') this.stats.winsWhite++;
+          else this.stats.winsBlack++;
+        } else {
+          this.stats.draws++;
+        }
+        this.stats.totalGames++;
+
+        this.updateFromTrajectory(trajectory, reward);
+        this.epsilon = Math.max(0.04, this.epsilon * 0.998);
+
+        if (progressCallback && (i % 2 === 0 || i === numGames - 1)) {
+          progressCallback({
+            completed: i + 1,
+            total: numGames,
+            reward,
+            moves: movesCount,
+            winner: endStatus.over && endStatus.reason === 'checkmate' ? endStatus.winner : 'draw',
+            weights: { ...this.weights },
+            stats: { ...this.stats },
+            epsilon: this.epsilon,
+            episodesTrained: this.episodesTrained
+          });
+          await new Promise(r => setTimeout(r, 0));
+        }
+      }
+
+      this.isTraining = false;
+      return { stats: this.stats, weights: this.weights };
+    }
+
+    saveToStorage() {
+      try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('deep_pawn_rl_weights', JSON.stringify({
+            weights: this.weights,
+            episodesTrained: this.episodesTrained,
+            stats: this.stats,
+            epsilon: this.epsilon
+          }));
+        }
+      } catch (e) {}
+    }
+
+    loadFromStorage() {
+      try {
+        if (typeof localStorage !== 'undefined') {
+          const raw = localStorage.getItem('deep_pawn_rl_weights');
+          if (raw) {
+            const data = JSON.parse(raw);
+            if (data.weights) this.weights = { ...DEFAULT_RL_WEIGHTS, ...data.weights };
+            if (data.episodesTrained) this.episodesTrained = data.episodesTrained;
+            if (data.stats) this.stats = data.stats;
+            if (data.epsilon) this.epsilon = data.epsilon;
+          }
+        }
+      } catch (e) {}
+    }
+
+    resetWeights() {
+      this.weights = { ...DEFAULT_RL_WEIGHTS };
+      this.episodesTrained = 0;
+      this.stats = { winsWhite: 0, winsBlack: 0, draws: 0, totalGames: 0 };
+      this.epsilon = 0.12;
+      this.saveToStorage();
+    }
+  }
+
   // --- BOT SEARCH AI ---
   class ChessBot {
     constructor(engine, options = {}) {
@@ -987,6 +1317,7 @@
       this.killerMoves = [];
       this.historyTable = {};
       this.stopSearch = false;
+      this.rlAgent = options.rlAgent || new RLChessAgent(this.engine);
     }
 
     findBestMove(options = {}) {
@@ -1029,9 +1360,13 @@
       // Configure Search Parameters based on difficulty
       let targetDepth = 3;
       let randomness = 0;
+      const isRLBot = difficulty === 'rl_bot' || options.useRL;
 
       if (customDepth) {
         targetDepth = customDepth;
+      } else if (isRLBot) {
+        targetDepth = 3;
+        randomness = 0;
       } else if (difficulty === 'beginner') {
         targetDepth = 1;
         randomness = 0.35; // 35% random blunder rate
@@ -1076,7 +1411,7 @@
           let maxEval = -Infinity;
           for (let move of orderedMoves) {
             this.engine.makeMove(move);
-            const score = this.minimax(depth - 1, alpha, beta, false);
+            const score = this.minimax(depth - 1, alpha, beta, false, isRLBot);
             this.engine.undoMove();
 
             if (score > maxEval) {
@@ -1094,7 +1429,7 @@
           let minEval = Infinity;
           for (let move of orderedMoves) {
             this.engine.makeMove(move);
-            const score = this.minimax(depth - 1, alpha, beta, true);
+            const score = this.minimax(depth - 1, alpha, beta, true, isRLBot);
             this.engine.undoMove();
 
             if (score < minEval) {
@@ -1119,15 +1454,16 @@
         score: bestScore,
         depth: targetDepth,
         nodes: this.nodesVisited,
-        timeMs: Date.now() - startTime
+        timeMs: Date.now() - startTime,
+        isRL: isRLBot
       };
     }
 
-    minimax(depth, alpha, beta, isMaximizing) {
+    minimax(depth, alpha, beta, isMaximizing, isRLBot = false) {
       this.nodesVisited++;
 
       if (depth === 0) {
-        return this.quiescence(alpha, beta, isMaximizing, 3);
+        return this.quiescence(alpha, beta, isMaximizing, 3, isRLBot);
       }
 
       const legalMoves = this.engine.getLegalMoves();
@@ -1144,7 +1480,7 @@
         let maxEval = -Infinity;
         for (let move of orderedMoves) {
           this.engine.makeMove(move);
-          const score = this.minimax(depth - 1, alpha, beta, false);
+          const score = this.minimax(depth - 1, alpha, beta, false, isRLBot);
           this.engine.undoMove();
 
           maxEval = Math.max(maxEval, score);
@@ -1159,7 +1495,7 @@
         let minEval = Infinity;
         for (let move of orderedMoves) {
           this.engine.makeMove(move);
-          const score = this.minimax(depth - 1, alpha, beta, true);
+          const score = this.minimax(depth - 1, alpha, beta, true, isRLBot);
           this.engine.undoMove();
 
           minEval = Math.min(minEval, score);
@@ -1173,9 +1509,9 @@
       }
     }
 
-    quiescence(alpha, beta, isMaximizing, maxDepth) {
+    quiescence(alpha, beta, isMaximizing, maxDepth, isRLBot = false) {
       this.nodesVisited++;
-      const standPat = this.engine.evaluate();
+      const standPat = isRLBot ? this.rlAgent.evaluate(this.engine) : this.engine.evaluate();
 
       if (maxDepth === 0) return standPat;
 
@@ -1188,7 +1524,7 @@
 
         for (let move of ordered) {
           this.engine.makeMove(move);
-          const score = this.quiescence(alpha, beta, false, maxDepth - 1);
+          const score = this.quiescence(alpha, beta, false, maxDepth - 1, isRLBot);
           this.engine.undoMove();
 
           if (score >= beta) return beta;
@@ -1204,7 +1540,7 @@
 
         for (let move of ordered) {
           this.engine.makeMove(move);
-          const score = this.quiescence(alpha, beta, true, maxDepth - 1);
+          const score = this.quiescence(alpha, beta, true, maxDepth - 1, isRLBot);
           this.engine.undoMove();
 
           if (score <= alpha) return alpha;
@@ -1265,6 +1601,9 @@
   return {
     ChessEngine,
     ChessBot,
+    RLChessAgent,
+    DEFAULT_RL_WEIGHTS,
+    RL_FEATURE_NAMES,
     coordToSquare,
     squareToCoord
   };

@@ -1,0 +1,23 @@
+{
+  "weights": {
+    "pawn": 98.54888069878419,
+    "knight": 317.2520303844766,
+    "bishop": 333.13128687108036,
+    "rook": 501.3901642529214,
+    "queen": 914.1592246350344,
+    "mobility": 5.616441064592515,
+    "center_control": 14.67845643820478,
+    "pawn_advance": 7.793828144864625,
+    "king_shelter": 23.22077807431387,
+    "bishop_pair": 47.836428806838015,
+    "threats": 22.0
+  },
+  "episodes_trained": 5,
+  "stats": {
+    "wins_white": 0,
+    "wins_black": 0,
+    "draws": 5,
+    "total_games": 5
+  },
+  "epsilon": 0.11904287616191998
+}

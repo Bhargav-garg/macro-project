@@ -672,14 +672,27 @@ def run_cli_game():
         bot_mode = True
 
     depth = 3
+    is_rl = False
+    rl_agent = None
+
     if bot_mode:
         print("\nSelect Bot Difficulty:")
         print("  1. Easy   (Depth 1)")
         print("  2. Medium (Depth 2)")
         print("  3. Hard   (Depth 3)")
         print("  4. Master (Depth 4)")
-        d_choice = safe_input("Enter depth [1-4, default 3]: ", "3")
-        depth = {'1': 1, '2': 2, '3': 3, '4': 4}.get(d_choice, 3)
+        print("  5. NeuroPawn (Reinforcement Learning Agent)")
+        d_choice = safe_input("Enter choice [1-5, default 3]: ", "3")
+        if d_choice == "5":
+            is_rl = True
+            try:
+                from rl_chess import RLChessAgent
+                rl_agent = RLChessAgent()
+                print("  Loaded NeuroPawn RL Agent with trained weights!")
+            except Exception:
+                is_rl = False
+        else:
+            depth = {'1': 1, '2': 2, '3': 3, '4': 4}.get(d_choice, 3)
 
     bot = Bot(depth=depth)
 
@@ -737,19 +750,33 @@ def run_cli_game():
 
             board.make_move(chosen_move)
         else:
-            print(f"{turn_str} (Bot) is calculating (Depth {depth})...")
-            start_t = time.time()
-            best_m = bot.find_best_move(board)
-            elapsed = time.time() - start_t
+            if is_rl and rl_agent:
+                print(f"{turn_str} (NeuroPawn RL) is selecting action with learned weights...")
+                start_t = time.time()
+                best_m = rl_agent.select_action(board)
+                elapsed = time.time() - start_t
+                eval_val = rl_agent.evaluate(board)
+                if not best_m:
+                    print("No moves available.")
+                    break
+                uci_str = board.move_to_uci(best_m)
+                print(f"NeuroPawn played: {uci_str} (RL Eval: {eval_val:+.1f} in {elapsed:.2f}s)")
+                board.make_move(best_m)
+                time.sleep(0.3)
+            else:
+                print(f"{turn_str} (Bot) is calculating (Depth {depth})...")
+                start_t = time.time()
+                best_m = bot.find_best_move(board)
+                elapsed = time.time() - start_t
 
-            if not best_m:
-                print("No moves available.")
-                break
+                if not best_m:
+                    print("No moves available.")
+                    break
 
-            uci_str = board.move_to_uci(best_m)
-            print(f"Bot played: {uci_str} ({bot.nodes} nodes in {elapsed:.2f}s)")
-            board.make_move(best_m)
-            time.sleep(0.3)
+                uci_str = board.move_to_uci(best_m)
+                print(f"Bot played: {uci_str} ({bot.nodes} nodes in {elapsed:.2f}s)")
+                board.make_move(best_m)
+                time.sleep(0.3)
 
 
 if __name__ == '__main__':

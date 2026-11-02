@@ -593,6 +593,14 @@ document.addEventListener('DOMContentLoaded', () => {
   difficultySelect.onchange = (e) => {
     difficulty = e.target.value;
     showToast(`Difficulty set to ${e.target.options[e.target.selectedIndex].text}`);
+    // Update bot name display
+    const botNameEl = document.querySelector('.player-card:first-child .player-name');
+    if (botNameEl) {
+      botNameEl.textContent = difficulty === 'rl_bot' ? 'NeuroPawn RL' : 'Deep Pawn AI';
+    }
+    if (difficulty === 'rl_bot') {
+      updateRLStudioUI();
+    }
   };
 
   sideSelect.onchange = (e) => {
@@ -672,4 +680,251 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Initial render
   renderBoard();
+
+  // ─────────────────────────────────────────────────
+  //   RL STUDIO — Controller
+  // ─────────────────────────────────────────────────
+  const rlAgent = bot.rlAgent;  // RLChessAgent attached to bot
+
+  // DOM refs
+  const rlModal           = document.getElementById('rlModal');
+  const rlStudioBtn       = document.getElementById('rlStudioBtn');
+  const closeRlBtn        = document.getElementById('closeRlBtn');
+  const rlTrain25Btn      = document.getElementById('rlTrain25Btn');
+  const rlTrain100Btn     = document.getElementById('rlTrain100Btn');
+  const rlStopTrainBtn    = document.getElementById('rlStopTrainBtn');
+  const rlProgressContainer = document.getElementById('rlProgressContainer');
+  const rlProgressBar     = document.getElementById('rlProgressBar');
+  const rlProgressText    = document.getElementById('rlProgressText');
+  const rlLog             = document.getElementById('rlLog');
+  const rlWeightsGrid     = document.getElementById('rlWeightsGrid');
+  const rlEpisodesVal     = document.getElementById('rlEpisodesVal');
+  const rlRecordVal       = document.getElementById('rlRecordVal');
+  const rlEpsilonVal      = document.getElementById('rlEpsilonVal');
+  const rlLossVal         = document.getElementById('rlLossVal');
+  const rlExportBtn       = document.getElementById('rlExportBtn');
+  const rlImportBtn       = document.getElementById('rlImportBtn');
+  const rlFileInput       = document.getElementById('rlFileInput');
+  const rlResetBtn        = document.getElementById('rlResetBtn');
+  const rlStatusBadge     = document.getElementById('rlStatusBadge');
+
+  let isRLTraining = false;
+
+  /** Refresh all metric readouts and the weights visualizer */
+  function updateRLStudioUI() {
+    if (!rlAgent) return;
+
+    // Metrics
+    if (rlEpisodesVal) rlEpisodesVal.textContent = rlAgent.episodesTrained || 0;
+    if (rlEpsilonVal)  rlEpsilonVal.textContent  = (rlAgent.epsilon || 0).toFixed(3);
+    if (rlRecordVal) {
+      const stats = rlAgent.stats || {};
+      const w = stats.wins || 0, d = stats.draws || 0, l = stats.losses || 0;
+      rlRecordVal.textContent = `${w}W / ${d}D / ${l}L`;
+    }
+    if (rlLossVal) {
+      const lastLoss = rlAgent.lastLoss !== undefined ? rlAgent.lastLoss.toFixed(4) : '—';
+      rlLossVal.textContent = lastLoss;
+    }
+
+    // Weights bar chart
+    if (rlWeightsGrid && rlAgent.weights) {
+      rlWeightsGrid.innerHTML = '';
+      const weights = rlAgent.weights;
+      const featureNames = ChessEngine.RL_FEATURE_NAMES || Object.keys(weights);
+      const vals = featureNames.map(k => Math.abs(weights[k] || 0));
+      const maxVal = Math.max(...vals, 1);
+
+      featureNames.forEach((name, i) => {
+        const val = weights[name] !== undefined ? weights[name] : 0;
+        const pct = Math.min(100, (Math.abs(val) / maxVal) * 100).toFixed(1);
+        const item = document.createElement('div');
+        item.className = 'rl-weight-item';
+        item.innerHTML = `
+          <div class="rl-weight-label">${name}</div>
+          <div class="rl-weight-bar-bg">
+            <div class="rl-weight-bar" style="width:${pct}%"></div>
+          </div>
+          <div class="rl-weight-value">${val.toFixed(1)}</div>`;
+        rlWeightsGrid.appendChild(item);
+      });
+    }
+
+    // Status badge
+    if (rlStatusBadge) {
+      rlStatusBadge.textContent = isRLTraining ? 'Training…' : 'Idle';
+      rlStatusBadge.className   = 'rl-status-badge ' + (isRLTraining ? 'training' : '');
+    }
+  }
+
+  function rlAppendLog(msg) {
+    if (!rlLog) return;
+    const line = document.createElement('div');
+    line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    rlLog.appendChild(line);
+    rlLog.scrollTop = rlLog.scrollHeight;
+    // Keep log trimmed to 200 lines
+    while (rlLog.children.length > 200) rlLog.removeChild(rlLog.firstChild);
+  }
+
+  /** Run N self-play training episodes asynchronously */
+  async function runRLTraining(episodes) {
+    if (!rlAgent || isRLTraining) return;
+    isRLTraining = true;
+    rlStopTrainBtn.disabled   = false;
+    rlTrain25Btn.disabled     = true;
+    rlTrain100Btn.disabled    = true;
+    if (rlProgressContainer) rlProgressContainer.style.display = 'block';
+    rlAppendLog(`Starting ${episodes}-episode training session…`);
+    updateRLStudioUI();
+
+    const startEp = rlAgent.episodesTrained || 0;
+
+    try {
+      await rlAgent.trainSelfPlayBatch(episodes, (info) => {
+        // Progress callback from trainSelfPlayBatch
+        const done    = info.episode || 0;
+        const total   = episodes;
+        const pct     = Math.round((done / total) * 100);
+        if (rlProgressBar) rlProgressBar.style.width = pct + '%';
+        if (rlProgressText) rlProgressText.textContent = `${done} / ${total} episodes`;
+
+        if (info.log) rlAppendLog(info.log);
+        updateRLStudioUI();
+      });
+    } catch (err) {
+      rlAppendLog(`Training error: ${err.message}`);
+    }
+
+    const finalEp = rlAgent.episodesTrained || 0;
+    rlAppendLog(`Training complete! Ran ${finalEp - startEp} episodes. Total: ${finalEp}`);
+
+    isRLTraining = false;
+    rlStopTrainBtn.disabled   = true;
+    rlTrain25Btn.disabled     = false;
+    rlTrain100Btn.disabled    = false;
+    if (rlProgressContainer) rlProgressContainer.style.display = 'none';
+    updateRLStudioUI();
+    showToast(`RL training done — ${finalEp} episodes total`);
+  }
+
+  // ── Modal open / close ──────────────────────────
+  if (rlStudioBtn) {
+    rlStudioBtn.onclick = () => {
+      if (rlModal) {
+        rlModal.classList.add('open');
+        updateRLStudioUI();
+        rlAppendLog('RL Studio opened. Agent ready.');
+      }
+    };
+  }
+
+  if (closeRlBtn) {
+    closeRlBtn.onclick = () => {
+      if (rlModal) rlModal.classList.remove('open');
+    };
+  }
+
+  // Close modal on backdrop click
+  if (rlModal) {
+    rlModal.addEventListener('click', (e) => {
+      if (e.target === rlModal) rlModal.classList.remove('open');
+    });
+  }
+
+  // ── Training buttons ────────────────────────────
+  if (rlTrain25Btn)  rlTrain25Btn.onclick  = () => runRLTraining(25);
+  if (rlTrain100Btn) rlTrain100Btn.onclick = () => runRLTraining(100);
+
+  if (rlStopTrainBtn) {
+    rlStopTrainBtn.disabled = true;
+    rlStopTrainBtn.onclick = () => {
+      if (rlAgent) rlAgent.stopRequested = true;
+      rlAppendLog('Stop requested — finishing current episode…');
+    };
+  }
+
+  // ── Export weights ──────────────────────────────
+  if (rlExportBtn) {
+    rlExportBtn.onclick = () => {
+      if (!rlAgent) return;
+      const data = {
+        weights:        rlAgent.weights,
+        episodesTrained: rlAgent.episodesTrained || 0,
+        epsilon:        rlAgent.epsilon,
+        stats:          rlAgent.stats || {},
+        exportedAt:     new Date().toISOString()
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = `neuropawn_weights_ep${data.episodesTrained}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      rlAppendLog('Weights exported to JSON file.');
+      showToast('RL weights exported!');
+    };
+  }
+
+  // ── Import weights ──────────────────────────────
+  if (rlImportBtn) {
+    rlImportBtn.onclick = () => { if (rlFileInput) rlFileInput.click(); };
+  }
+
+  if (rlFileInput) {
+    rlFileInput.onchange = (e) => {
+      const file = e.target.files[0];
+      if (!file || !rlAgent) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const data = JSON.parse(ev.target.result);
+          if (data.weights) {
+            rlAgent.weights = Object.assign({}, rlAgent.weights, data.weights);
+            if (data.episodesTrained !== undefined) rlAgent.episodesTrained = data.episodesTrained;
+            if (data.epsilon        !== undefined) rlAgent.epsilon          = data.epsilon;
+            if (data.stats          !== undefined) rlAgent.stats            = data.stats;
+            rlAgent.saveToStorage();
+            updateRLStudioUI();
+            rlAppendLog(`Imported weights from "${file.name}" (${data.episodesTrained || '?'} episodes).`);
+            showToast('RL weights imported!');
+          } else {
+            rlAppendLog('Import failed: no "weights" key found in file.');
+          }
+        } catch (err) {
+          rlAppendLog(`Import error: ${err.message}`);
+        }
+      };
+      reader.readAsText(file);
+      rlFileInput.value = '';
+    };
+  }
+
+  // ── Reset weights ───────────────────────────────
+  if (rlResetBtn) {
+    rlResetBtn.onclick = () => {
+      if (!rlAgent) return;
+      if (!confirm('Reset RL weights to defaults? This cannot be undone.')) return;
+      rlAgent.resetWeights();
+      updateRLStudioUI();
+      rlAppendLog('Weights reset to defaults.');
+      showToast('RL weights reset to defaults.');
+    };
+  }
+
+  // ── Wire rl_bot into checkAndTriggerBot ─────────
+  // Patch findBestMove call to pass rl_bot difficulty
+  const _origCheckAndTriggerBot = checkAndTriggerBot;
+
+  // Override the bot's findBestMove when rl_bot selected
+  const _origFindBestMove = bot.findBestMove.bind(bot);
+  // (No override needed — chess-engine.js already handles difficulty:'rl_bot')
+
+  // Load any previously saved weights from localStorage
+  if (rlAgent && typeof rlAgent.loadFromStorage === 'function') {
+    rlAgent.loadFromStorage();
+    updateRLStudioUI();
+  }
+
 });
